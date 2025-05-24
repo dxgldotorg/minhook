@@ -1,6 +1,7 @@
 ﻿/*
  *  MinHook - The Minimalistic API Hooking Library for x64/x86
  *  Copyright (C) 2009-2017 Tsuda Kageyu.
+ *  Modified for DXGL by William Feely 2025
  *  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
@@ -26,9 +27,12 @@
  *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#define STRICT
+#define _WIN32_WINNT 0x0501
 #include <windows.h>
 #include <tlhelp32.h>
 #include <limits.h>
+#include <tchar.h>
 
 #include "../include/MinHook.h"
 #include "buffer.h"
@@ -324,6 +328,30 @@ static BOOL EnumerateThreads(PFROZEN_THREADS pThreads)
     return succeeded;
 }
 
+static HANDLE(WINAPI *__OpenThread)(DWORD dwDesiredAccess, BOOL  bInheritHandle, DWORD dwThreadId) = NULL;
+static BOOL OpenThreadFail = FALSE;
+static HANDLE WINAPI _OpenThread(DWORD dwDesiredAccess, BOOL  bInheritHandle, DWORD dwThreadId)
+{
+    HANDLE hKernel32;
+    if (!__OpenThread)
+    {
+        if (OpenThreadFail) return NULL;
+        hKernel32 = GetModuleHandle(_T("kernel32.dll"));
+        if (!hKernel32)
+        {
+            OpenThreadFail = TRUE;
+            return NULL;
+        }
+        __OpenThread = GetProcAddress(hKernel32, "OpenThread");
+        if (!__OpenThread)
+        {
+            OpenThreadFail = TRUE;
+            return NULL;
+        }
+    }
+    return __OpenThread(dwDesiredAccess, bInheritHandle, dwThreadId);
+}
+
 //-------------------------------------------------------------------------
 static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
 {
@@ -341,7 +369,7 @@ static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
         UINT i;
         for (i = 0; i < pThreads->size; ++i)
         {
-            HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
+            HANDLE hThread = _OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
             BOOL suspended = FALSE;
             if (hThread != NULL)
             {
@@ -376,7 +404,7 @@ static VOID Unfreeze(PFROZEN_THREADS pThreads)
             DWORD threadId = pThreads->pItems[i];
             if (threadId != 0)
             {
-                HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, threadId);
+                HANDLE hThread = _OpenThread(THREAD_ACCESS, FALSE, threadId);
                 if (hThread != NULL)
                 {
                     ResumeThread(hThread);
